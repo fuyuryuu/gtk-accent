@@ -298,7 +298,7 @@ _check_colour()
 		nautilus )
 			new_accent="nautilus"
 			prompt_main="29;29;32"
-			prompt_dir=
+			prompt_dir="29;29;32"
 			;;
 		setup )
 			_setup "${args[1]}"
