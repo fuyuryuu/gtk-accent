@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+
+################################################################################
+# change GNOME shell accent, along with accent in gtk.css - expects adw-gtk3
+# Usage: gtk-accent [OPTION(S)] [COLOUR]
+#    -n  Don't theme headerbars                 _._     _,-'""`-._     :mhrrp:
+#    -P  Theme terminal prompt                 (,-.`._,'(       |\`-/|   ;
+#    -T  Set theme to dark or light                `-.-' \ )-`( , o o) .'
+#    -l  List current config and exit                    `-    \`_`"'-
+# setup  Copy over new gtk.css, create symlinks and exit
+# terminal kitty is pleased you have downloaded this script
+################################################################################
+
+gtk3_css="$HOME/.config/gtk-3.0/gtk.css"
+gtk_css="$HOME/.config/gtk-4.0/gtk.css"
+gtk3_ini="$HOME/.config/gtk-3.0/settings.ini"
+gtk_ini="$HOME/.config/gtk-4.0/settings.ini"
+bashrc="$HOME/.bashrc"
+
+_colours()
+  {
+	echo "COLOURS:"
+	echo "       blue, teal, green, yellow, orange,"
+	echo "       red, pink, purple, slate, nautilus"
+  }
+
+_options()
+  {
+	echo "USAGE: ${0##*/} [OPTION(S)] [COLOUR]"
+	echo "   -n  Don't theme headerbars"
+	echo "   -P  Theme terminal prompt"
+	echo "   -T  Set theme to dark or light"
+	echo "   -l  List current config and exit"
+	echo "setup  Copy over new gtk.css, create symlinks and exit"
+  }
+
+_error()
+  {
+	echo "ERROR: $1"
+	if [[ "${@:2}" =~ "--options" ]] ; then
+		_options
+	fi
+	if [[ "${@:2}" =~ "--colours" ]] ; then
+		_colours
+	fi
+	exit 1
+  }
+
+_check_deps()
+  {
+	local theme="$(gsettings get org.gnome.desktop.interface gtk-theme)"
+	if ! [[ $theme =~ adw-gtk3 ]] ; then
+		_error "Legacy application theme must be adw-gtk3 or its dark variant"
+	fi
+  }
+
+_continue()
+  {
+	local yn
+		read -p "Do you wish to continue? [y/N]: " yn
+		if [[ $yn != y && $yn != Y ]] ; then
+			echo "Not continuing"
+			exit 0
+		fi
+  }
+
+_check_file_contents() # ensure we aren't overwriting unprepared files
+  {
+	if ! [[ -f "$1" ]] ; then
+		return 0
+	fi
+	until grep -q b6d63a2a81966b0399b0bb6065e6afd1 "$1" ; do
+		echo "File $1 does not contain gtk-accent file identifier string"
+		echo "Editing it may produce unexpected results"
+		_continue
+	done
+  }
+
+_get_current_accent()
+  {
+	current_accent="$(awk '{if(/@define-color ACTIVE_accent/) print $NF}' \
+						"$gtk_css")"
+	current_accent="${current_accent##*_}"
+	current_accent="${current_accent::-1}"
+	current_accent_shell="$(gsettings get org.gnome.desktop.interface accent-color)"
+	current_accent_shell="${current_accent_shell:1}"
+	current_accent_shell="${current_accent_shell::-1}"
+	local prompt_themed=no headerbar_themed=no
+	if [[ $(gsettings get org.gnome.desktop.interface color-scheme) =~ dark ]] ; then
+		current_mode=dark
+		current_theme=adw-gtk3-dark
+		switch_mode=light
+		switch_theme=adw-gtk3
+	else
+		current_mode=light
+		current_theme=adw-gtk3
+		switch_mode=dark
+		switch_theme=adw-gtk3-dark
+	fi
+	if grep -q "^export PROMPT_COLOR=.*# b6d63a2a81966b0399b0bb6065e6afd1 ${current_accent}$" "$bashrc" ; then
+		prompt_themed=yes
+	fi
+	if grep -q "^@define-color headerbar_bg_color mix(@GNOME_headerbar_${current_mode}, ${current_mode}er(@ACTIVE_accent), 0.666666);$" "$gtk_css" ; then
+		headerbar_themed=yes
+	fi
+	if [[ $1 == --list ]] ; then
+		echo "              mode : $current_mode"
+		echo "gnome-shell accent : $current_accent_shell"
+		echo "    gtk.css accent : $current_accent"
+		echo "     current theme : $current_theme"
+		echo " themed headerbars : $headerbar_themed"
+		echo "     themed prompt : $prompt_themed"
+		exit 0
+	fi
+  }
+
+_toggle_dark_mode()
+  {
+	echo "Switching to $switch_mode mode"
+	gsettings set org.gnome.desktop.interface color-scheme prefer-$switch_mode
+	gsettings set org.gnome.desktop.interface gtk-theme $switch_theme
+	if [[ $switch_mode == dark ]] ; then
+		sed -i \
+			"s/^gtk-application-prefer-dark-theme=./gtk-application-prefer-dark-theme=1/g" \
+			"$gtk_ini"
+	else
+		sed -i \
+			"s/^gtk-application-prefer-dark-theme=./gtk-application-prefer-dark-theme=0/g" \
+			"$gtk_ini"
+	fi
+	sed -i \
+		"s/@GNOME_headerbar_${current_mode}, ${current_mode}er/@GNOME_headerbar_${switch_mode}, ${switch_mode}er/g" \
+		"$gtk_css"
+	sed -i \
+		"s/@GNOME_headerbar_bd_${current_mode}, ${current_mode}er(${current_mode}er/@GNOME_headerbar_bd_${switch_mode}, ${switch_mode}er(${switch_mode}er/g" \
+		"$gtk_css"
+  }
+
+_set_new_accent()
+  {
+	if [[ "$new_accent" != nautilus ]] ; then
+		gsettings set org.gnome.desktop.interface accent-color "$new_accent"
+	fi
+	sed -i \
+		"s/ACTIVE_accent @GNOME_accent_${current_accent}/ACTIVE_accent @GNOME_accent_${new_accent}/g" \
+		"$gtk_css"
+	if $theming_prompt ; then
+		# immediate feedback in current prompt #FIXME y u no work
+		export PROMPT_COLOR="38;2;${prompt_main}"
+		export PROMPT_DIR_COLOR="38;2;${prompt_dir}"
+		# save to .bashrc - hash is so we don't replace lines not genned by us
+		sed -i \
+			"s/^export PROMPT_COLOR=.*# b6d63a2a81966b0399b0bb6065e6afd1 ${current_accent}$/export PROMPT_COLOR=\"38;2;${prompt_main}\" # b6d63a2a81966b0399b0bb6065e6afd1 ${new_accent}/g" \
+			"$bashrc"
+		sed -i \
+			"s/^export PROMPT_DIR_COLOR=.*# b6d63a2a81966b0399b0bb6065e6afd1 ${current_accent}$/export PROMPT_DIR_COLOR=\"38;2;${prompt_dir}\" # b6d63a2a81966b0399b0bb6065e6afd1 ${new_accent}/g" \
+			"$bashrc"
+		sed -i \
+			"s/^#gtk_accent_theme_prompt$/gtk_accent_theme_prompt/g" \
+			"$bashrc"
+	else # disable function
+		sed -i \
+			"s/^gtk_accent_theme_prompt$/#gtk_accent_theme_prompt/g" \
+			"$bashrc"
+	fi
+	sed -i \
+		"/^@define-color headerbar_bg_color.*/d" \
+		"$gtk_css"
+	sed -i \
+		"/^@define-color headerbar_backdrop_color.*/d" \
+		"$gtk_css"
+	if $theming_headerbar ; then
+		printf "%s\n" "@define-color headerbar_bg_color mix(@GNOME_headerbar_${switch_mode}, ${switch_mode}er(@ACTIVE_accent), 0.666666);" \
+			>> "$gtk_css"
+		if [[ $switch_mode == light ]] ; then
+			printf "%s\n" "@define-color headerbar_backdrop_color mix(@GNOME_headerbar_bd_light, lighter(@ACTIVE_accent), 0.25);" \
+				>> "$gtk_css"
+		else
+			printf "%s\n" "@define-color headerbar_backdrop_color mix(@GNOME_headerbar_bd_dark, darker(darker(@ACTIVE_accent)), 0.5);" \
+				>> "$gtk_css"
+		fi
+	fi
+	echo "Accent set to $new_accent"
+  }
+
+_backup()
+  {
+    local n
+	if [[ -f "$1" ]] ; then
+		echo "gtk.css found at $1"
+		_continue
+		until mv "$1" "${1}.bak$n" ; do
+			((n++))
+		done
+		echo "Backed up gtk.css to ${1}.bak$n"
+	else
+		echo "No gtk.css found. Continuing"
+	fi
+  }
+
+_setup()
+  {
+	# ensure we don't erase existing gtk.css
+	_backup "$gtk_css"
+	_backup "$gtk3_css"
+
+	# insert function into .bashrc
+	cat 2>/dev/null <<-"EOF" >> "$bashrc"
+	# function created by gtk-accent script
+	gtk_accent_theme_prompt() {
+	export PROMPT_COLOR="38;2;53;132;228" # b6d63a2a81966b0399b0bb6065e6afd1 blue
+	export PROMPT_DIR_COLOR="38;2;46;77;117" # b6d63a2a81966b0399b0bb6065e6afd1 blue
+	}
+	#gtk_accent_theme_prompt
+	EOF
+
+	# create new gtk.css
+	cat 2>/dev/null <<-"EOF" > "$gtk_css"
+	/***** b6d63a2a81966b0399b0bb6065e6afd1 *****/
+	/********* default headerbar colour *********/
+	@define-color GNOME_headerbar_dark #2e2e32;
+	@define-color GNOME_headerbar_bd_dark #222226;
+	@define-color GNOME_headerbar_light #ffffff;
+	@define-color GNOME_headerbar_bd_light #fafafb;
+	/******** colour of Nautilus' window ********/
+	@define-color GNOME_accent_nautilus #1d1d20;
+	/*********** preset GNOME accents ***********/
+	@define-color GNOME_accent_blue #3584e4;
+	@define-color GNOME_accent_teal #2190a4;
+	@define-color GNOME_accent_green #3a944a;
+	@define-color GNOME_accent_yellow #c88800;
+	@define-color GNOME_accent_orange #ed5b00;
+	@define-color GNOME_accent_red #e62d42;
+	@define-color GNOME_accent_pink #d56199;
+	@define-color GNOME_accent_purple #9141ac;
+	@define-color GNOME_accent_slate #6f8396;
+	/******** do not manually edit below ********/
+	/*** lines are programmatically generated ***/
+	@define-color ACTIVE_accent @GNOME_accent_blue;
+	@define-color accent_bg_color @ACTIVE_accent;
+	@define-color accent_color @ACTIVE_accent;
+	EOF
+
+	# create symlinks from 3.0 to 4.0 versions
+	ln -s "$gtk_css" "gtk3_css"
+	ln -sf "$gtk_ini" "$gtk3_ini"
+  }
+
+_check_colour()
+  {
+	local args=("$@")
+	case "${args[0]}" in
+		blue )
+			new_accent="blue"
+			prompt_main="53;132;228"
+			prompt_dir="46;77;117"
+			;;
+		teal )
+			new_accent="teal"
+			prompt_main="33;144;164"
+			prompt_dir="40;76;84"
+			;;
+		green )
+			new_accent="green"
+			prompt_main="58;148;74"
+			prompt_dir="49;78;55"
+			;;
+		yellow )
+			new_accent="yellow"
+			prompt_main="200;136;0"
+			prompt_dir="95;74;31"
+			;;
+		orange )
+			new_accent="orange"
+			prompt_main="237;91;0"
+			prompt_dir="109;62;33"
+			;;
+		red )
+			new_accent="red"
+			prompt_main="230;45;66"
+			prompt_dir="115;44;53"
+			;;
+		pink )
+			new_accent="pink"
+			prompt_main="213;97;153"
+			prompt_dir="117;58;88"
+			;;
+		purple )
+			new_accent="purple"
+			prompt_main="145;65;172"
+			prompt_dir="79;53;89"
+			;;
+		slate )
+			new_accent="slate"
+			prompt_main="111;131;150"
+			prompt_dir="70;76;84"
+			;;
+		nautilus )
+			new_accent="nautilus"
+			prompt_main="29;29;32"
+			prompt_dir=
+			;;
+		setup )
+			_setup "${args[1]}"
+			;;
+		* )
+			_error "Invalid colour $1" --colours
+			;;
+	esac
+  }
+
+_logout_prompt()
+  {
+	echo "Log out to see full results..."
+	_continue
+	gnome-session-quit --logout --force
+  }
+
+_handle_args()
+  {
+	# handle no options and exit
+	if [[ $# -eq 0 ]] ; then
+		echo "Sets GNOME accent colour in gsettings and gtk.css,"
+		echo "and optionally themes terminal prompt to match"
+		echo "Log out or restart GNOME session to see full results"
+		echo
+		_options
+		echo
+		_colours
+		exit
+	fi
+	# at least 1 option going forward
+	local opt OPTARG OPTIND
+	# set defaults
+	theming_prompt=false
+	theming_headerbar=true
+	toggling_mode=false
+	while getopts ':nPTl' opt ; do
+		while [[ $1 =~ ^- ]] ; do
+			case "${opt[@]}" in
+				-n|n )
+					theming_headerbar=false
+					;;
+				-P|P )
+					theming_prompt=true
+					;;
+				-T|T )
+					toggling_mode=true
+					;;
+				-l|l )
+					_get_current_accent --list
+					;;
+				* )
+					_error "Unknown option $1" --options
+					;;
+			esac
+			break
+		done
+	done
+	shift $((OPTIND-1))
+	if [[ -z $1 ]] ; then
+		_error "Requires a colour" --options
+	fi
+	_check_colour "$@"
+  }
+
+_check_deps
+
+_check_file_contents "$gtk_css"
+
+_check_file_contents "$bashrc"
+
+_handle_args "$@"
+
+_get_current_accent
+
+if [[ $# -eq 1 && "$current_accent" == "$new_accent" ]] ; then
+	exit 0
+fi
+
+if $toggling_mode ; then
+	_toggle_dark_mode
+else
+	switch_mode=$current_mode
+fi
+
+_set_new_accent
+
+_logout_prompt
