@@ -1,5 +1,5 @@
 # gtk-accent
-Bash script to switch Adwaita accent colours.
+Bash script to switch Adwaita accent colours on GNOME.
 
 Uses ~/.config/gtk-*n*.0/gtk.css to add shades of the accent as the headerbar colour.
 
