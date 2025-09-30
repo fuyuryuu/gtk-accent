@@ -242,7 +242,7 @@ _setup()
 	EOF
 
 	# create symlinks from 3.0 to 4.0 versions
-	ln -s "$gtk_css" "gtk3_css"
+	ln -s "$gtk_css" "$gtk3_css"
 	ln -sf "$gtk_ini" "$gtk3_ini"
   }
 
